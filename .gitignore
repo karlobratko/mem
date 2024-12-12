@@ -1,0 +1,28 @@
+# Bin folder
+bin/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*~
+
+# Compiled Object files
+*.o
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Dependency files
+*.d
+
+# Config files
+.clang-tidy

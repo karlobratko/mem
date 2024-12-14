@@ -8,9 +8,10 @@ TEST_DIR = tests
 BIN_DIR = bin
 TEST_BIN_DIR = $(BIN_DIR)/tests
 HEADER = mem.h
+TEST_IMPL = $(TEST_DIR)/test_utils.c
 
 # Test files
-TEST_SOURCES = $(wildcard $(TEST_DIR)/*.c)
+TEST_SOURCES = $(filter-out $(TEST_IMPL), $(wildcard $(TEST_DIR)/*.c))
 TEST_BINARIES = $(TEST_SOURCES:$(TEST_DIR)/%.c=$(TEST_BIN_DIR)/%)
 
 # Common flags
@@ -34,9 +35,9 @@ all: test
 $(TEST_BIN_DIR):
 	mkdir -p $@
 
-# Compile test binaries
-$(TEST_BIN_DIR)/%: $(TEST_DIR)/%.c $(HEADER) | $(TEST_BIN_DIR)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -o $@ $<
+# Compile test binaries, linking with the STB implementation
+$(TEST_BIN_DIR)/%: $(TEST_DIR)/%.c $(TEST_IMPL) $(HEADER) | $(TEST_BIN_DIR)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -o $@ $< $(TEST_IMPL)
 
 # Debug and release targets
 debug: CFLAGS = $(CFLAGS_DEBUG)
@@ -81,4 +82,4 @@ clean:
 # Include generated dependencies
 -include $(DEPS)
 
-.PHONY: all test test-valgrind clean
+.PHONY: all debug release test test-valgrind clean

@@ -1,25 +1,24 @@
 #ifndef MEM_H
 #define MEM_H
 
-#ifndef MEM_DEF
-#define MEM_DEF static inline
+#ifndef MEMDEC
+#define MEMDEC extern
 #endif
 
-#ifndef MEM_EXT
-#define MEM_EXT extern
-#endif
-
-#include <stdalign.h>
 #include <stdbool.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct allocator_t allocator_t;
 
-MEM_DEF void *alloc_raw(const allocator_t *allocator, size_t size, size_t align);
+MEMDEC void *alloc_raw(const allocator_t *allocator, size_t size, size_t align);
 
-MEM_DEF bool resize_raw(const allocator_t *allocator, void *buf, size_t size, size_t align, size_t new_size);
+MEMDEC bool resize_raw(const allocator_t *allocator, void *buf, size_t size, size_t align, size_t new_size);
 
-MEM_DEF void dealloc_raw(const allocator_t *allocator, void *buf, size_t size, size_t align);
+MEMDEC void dealloc_raw(const allocator_t *allocator, void *buf, size_t size, size_t align);
 
 #define alloc(allocator, type, len) (alloc_raw((allocator), (sizeof(type) * len), alignof(type)))
 
@@ -33,46 +32,61 @@ MEM_DEF void dealloc_raw(const allocator_t *allocator, void *buf, size_t size, s
 
 // ----- LIBC allocator -----
 
-MEM_EXT const allocator_t libc_allocator;
+MEMDEC const allocator_t libc_allocator;
 
 // ----- LOGGING allocator -----
 
 typedef struct logging_allocator_t logging_allocator_t;
 
-MEM_DEF logging_allocator_t logging_allocator_init(const allocator_t *wrapped);
+MEMDEC logging_allocator_t logging_allocator_init(const allocator_t *wrapped);
 
-MEM_DEF allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx);
+MEMDEC allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx);
 
 // ----- FIXED BUFFER allocator -----
 
 typedef struct fixed_buffer_allocator_t fixed_buffer_allocator_t;
 
-MEM_DEF fixed_buffer_allocator_t fixed_buffer_allocator_init(void *buf, size_t size);
+MEMDEC fixed_buffer_allocator_t fixed_buffer_allocator_init(void *buf, size_t size);
 
-MEM_DEF allocator_t fixed_buffer_allocator_to_allocator(fixed_buffer_allocator_t *ctx);
+MEMDEC allocator_t fixed_buffer_allocator_to_allocator(fixed_buffer_allocator_t *ctx);
 
-MEM_DEF void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
+MEMDEC void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
 
 #ifdef MEM_IMPLEMENTATION
 
-#include <assert.h>
+#ifndef MEMDEF
+#define MEMDEF extern inline
+#endif
+
+#include <stdalign.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#if !defined(NDEBUG) && !defined(DEBUG)
-#define DEBUG
+#ifndef MEM_ASSERT
+#include <assert.h>
+#define MEM_ASSERT(x) assert(x)
 #endif
 
-#ifdef DEBUG
-MEM_DEF bool align_is_valid(const size_t align) {
+#if !defined(NDEBUG) && !defined(MEM_DEBUG)
+#define MEM_DEBUG
+#endif
+
+#define MEM_NOTUSED(x) (void)(x)
+
+#ifdef MEM_DEBUG
+static bool align_is_valid(const size_t align) {
     return align > 0 && (align & (align - 1)) == 0;
 }
 
-MEM_DEF uintptr_t align_address(const uintptr_t address, const size_t alignment) {
+static uintptr_t align_address(const uintptr_t address, const size_t alignment) {
     return (address + (alignment - 1)) & ~(alignment - 1);
 }
 #endif
@@ -90,37 +104,37 @@ struct allocator_t {
     const allocator_vtable_t *vtable;
 };
 
-MEM_DEF bool no_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
-    (void) ctx;
-    (void) buf;
-    (void) size;
-    (void) align;
-    (void) new_size;
+static bool no_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
+    MEM_NOTUSED(ctx);
+    MEM_NOTUSED(buf);
+    MEM_NOTUSED(size);
+    MEM_NOTUSED(align);
+    MEM_NOTUSED(new_size);
     return false;
 }
 
-MEM_DEF void no_dealloc(void *ctx, void *buf, size_t size, size_t align) {
-    (void) ctx;
-    (void) buf;
-    (void) size;
-    (void) align;
+static void no_dealloc(void *ctx, void *buf, size_t size, size_t align) {
+    MEM_NOTUSED(ctx);
+    MEM_NOTUSED(buf);
+    MEM_NOTUSED(size);
+    MEM_NOTUSED(align);
 }
 
-MEM_DEF void *alloc_raw(const allocator_t *allocator, const size_t size, const size_t align) {
-    assert(allocator != NULL);
-    assert(allocator->vtable != NULL);
-    assert(size > 0);
-    assert(align_is_valid(align));
+MEMDEF void *alloc_raw(const allocator_t *allocator, const size_t size, const size_t align) {
+    MEM_ASSERT(allocator != NULL);
+    MEM_ASSERT(allocator->vtable != NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(align_is_valid(align));
 
     return allocator->vtable->_alloc(allocator->ctx, size, align);
 }
 
-MEM_DEF bool resize_raw(const allocator_t *allocator, void *buf, const size_t size, const size_t align,
+MEMDEF bool resize_raw(const allocator_t *allocator, void *buf, const size_t size, const size_t align,
                         const size_t new_size) {
-    assert(allocator != NULL);
-    assert(allocator->vtable != NULL);
-    assert(buf != NULL);
-    assert(align_is_valid(align));
+    MEM_ASSERT(allocator != NULL);
+    MEM_ASSERT(allocator->vtable != NULL);
+    MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(align_is_valid(align));
 
     if (new_size == 0) {
         dealloc_raw(allocator->ctx, buf, size, align);
@@ -134,11 +148,11 @@ MEM_DEF bool resize_raw(const allocator_t *allocator, void *buf, const size_t si
     return allocator->vtable->_resize(allocator->ctx, buf, size, align, new_size);
 }
 
-MEM_DEF void dealloc_raw(const allocator_t *allocator, void *buf, const size_t size, const size_t align) {
-    assert(allocator != NULL);
-    assert(allocator->vtable != NULL);
-    assert(buf != NULL);
-    assert(align_is_valid(align));
+MEMDEF void dealloc_raw(const allocator_t *allocator, void *buf, const size_t size, const size_t align) {
+    MEM_ASSERT(allocator != NULL);
+    MEM_ASSERT(allocator->vtable != NULL);
+    MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(align_is_valid(align));
 
     if (size == 0) {
         return;
@@ -149,7 +163,7 @@ MEM_DEF void dealloc_raw(const allocator_t *allocator, void *buf, const size_t s
 
 // ----- LIBC allocator -----
 
-#ifdef DEBUG
+#ifdef MEM_DEBUG
 #define GUARD_PATTERN 0xDEADBEEF
 #define POISON_BYTE 0xCC
 #define ALLOC_BYTE 0xAA
@@ -158,12 +172,12 @@ MEM_DEF void dealloc_raw(const allocator_t *allocator, void *buf, const size_t s
 
 typedef struct {
     alignas(max_align_t)
-#ifdef DEBUG
+#ifdef MEM_DEBUG
     uint32_t guard_start;
 #endif
     void *raw_memory;
     size_t total_size;
-#ifdef DEBUG
+#ifdef MEM_DEBUG
     void *data_memory;
     size_t requested_size;
     size_t alignment;
@@ -171,18 +185,18 @@ typedef struct {
 #endif
 } header_t;
 
-MEM_DEF header_t *header_get(void *buf) {
+static header_t *header_get(void *buf) {
     const uintptr_t unaligned_header_address = (uintptr_t) buf - sizeof(header_t);
     const uintptr_t header_address = unaligned_header_address & ~(alignof(header_t) - 1);
     return (header_t *) header_address;
 }
 
-MEM_DEF void *_libc_allocator_alloc(void *ctx, size_t size, size_t align) {
-    (void) ctx;
+static void *_libc_allocator_alloc(void *ctx, size_t size, size_t align) {
+    MEM_NOTUSED(ctx);
 
-    assert(ctx == NULL);
-    assert(size > 0);
-    assert(align_is_valid(align));
+    MEM_ASSERT(ctx == NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(align_is_valid(align));
 
 #ifdef PREFER_LIBC_ALIGNED_ALLOC
     void *raw_memory = aligned_alloc(align, size);
@@ -212,7 +226,7 @@ MEM_DEF void *_libc_allocator_alloc(void *ctx, size_t size, size_t align) {
     header->raw_memory = raw_memory;
     header->total_size = total_size;
 
-#ifdef DEBUG
+#ifdef MEM_DEBUG
     header->guard_start = GUARD_PATTERN;
     header->data_memory = (void *) data_address;
     header->requested_size = size;
@@ -234,8 +248,8 @@ MEM_DEF void *_libc_allocator_alloc(void *ctx, size_t size, size_t align) {
 #endif
 }
 
-#ifdef DEBUG
-MEM_DEF void *memis(const void *s, const int c, size_t n) {
+#ifdef MEM_DEBUG
+static void *memis(const void *s, const int c, size_t n) {
     const unsigned char *p = s;
     const unsigned char v = c;
 
@@ -249,30 +263,30 @@ MEM_DEF void *memis(const void *s, const int c, size_t n) {
 }
 #endif
 
-MEM_DEF void _libc_allocator_dealloc(void *ctx, void *buf, size_t size, size_t align) {
-    (void) ctx;
-    (void) size;
+static void _libc_allocator_dealloc(void *ctx, void *buf, size_t size, size_t align) {
+    MEM_NOTUSED(ctx);
+    MEM_NOTUSED(size);
 
-    assert(ctx == NULL);
-    assert(buf != NULL);
-    assert(size > 0);
-    assert(align_is_valid(align));
+    MEM_ASSERT(ctx == NULL);
+    MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(align_is_valid(align));
 
 #ifdef PREFER_LIBC_ALIGNED_ALLOC
     free(buf);
 #else
     const header_t *header = header_get(buf);
     void *raw_memory = header->raw_memory;
-#ifdef DEBUG
-    assert(header->guard_start == GUARD_PATTERN && header->guard_end == GUARD_PATTERN);
+#ifdef MEM_DEBUG
+    MEM_ASSERT(header->guard_start == GUARD_PATTERN && header->guard_end == GUARD_PATTERN);
 
-    assert(memis(raw_memory, POISON_BYTE, (uintptr_t) header - (uintptr_t) raw_memory) == NULL);
+    MEM_ASSERT(memis(raw_memory, POISON_BYTE, (uintptr_t) header - (uintptr_t) raw_memory) == NULL);
 
     const uintptr_t header_end = (uintptr_t) header + sizeof(header_t);
-    assert(memis((void *) header_end, POISON_BYTE, (uintptr_t) buf - header_end) == NULL);
+    MEM_ASSERT(memis((void *) header_end, POISON_BYTE, (uintptr_t) buf - header_end) == NULL);
 
     const uintptr_t data_end = (uintptr_t) buf + size;
-    assert(memis((void *) data_end, POISON_BYTE, ((uintptr_t) raw_memory + header->total_size) - data_end) == NULL);
+    MEM_ASSERT(memis((void *) data_end, POISON_BYTE, ((uintptr_t) raw_memory + header->total_size) - data_end) == NULL);
 
     memset(header->raw_memory, FREED_BYTE, header->total_size);
 #endif
@@ -299,10 +313,10 @@ struct logging_allocator_t {
     const allocator_t *wrapped;
 };
 
-MEM_DEF void *_logging_allocator_alloc(void *ctx, size_t size, size_t align) {
-    assert(ctx != NULL);
-    assert(size > 0);
-    assert(align_is_valid(align));
+static void *_logging_allocator_alloc(void *ctx, size_t size, size_t align) {
+    MEM_ASSERT(ctx != NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(align_is_valid(align));
 
     const logging_allocator_t *logging_ctx = ctx;
 
@@ -319,10 +333,10 @@ MEM_DEF void *_logging_allocator_alloc(void *ctx, size_t size, size_t align) {
     return ptr;
 }
 
-MEM_DEF bool _logging_allocator_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
-    assert(ctx != NULL);
-    assert(buf != NULL);
-    assert(align_is_valid(align));
+static bool _logging_allocator_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
+    MEM_ASSERT(ctx != NULL);
+    MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(align_is_valid(align));
 
     const logging_allocator_t *logging_ctx = ctx;
 
@@ -339,11 +353,11 @@ MEM_DEF bool _logging_allocator_resize(void *ctx, void *buf, size_t size, size_t
     return success;
 }
 
-MEM_DEF void _logging_allocator_dealloc(void *ctx, void *buf, size_t size, size_t align) {
-    assert(ctx != NULL);
-    assert(buf != NULL);
-    assert(size > 0);
-    assert(align_is_valid(align));
+static void _logging_allocator_dealloc(void *ctx, void *buf, size_t size, size_t align) {
+    MEM_ASSERT(ctx != NULL);
+    MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(align_is_valid(align));
 
     const logging_allocator_t *logging_ctx = ctx;
 
@@ -360,13 +374,13 @@ static const allocator_vtable_t _logging_allocator_vtable = {
     ._dealloc = _logging_allocator_dealloc
 };
 
-MEM_DEF logging_allocator_t logging_allocator_init(const allocator_t *wrapped) {
+MEMDEF logging_allocator_t logging_allocator_init(const allocator_t *wrapped) {
     return (logging_allocator_t){
         .wrapped = wrapped
     };
 }
 
-MEM_DEF allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx) {
+MEMDEF allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx) {
     return (allocator_t){
         .ctx = ctx,
         .vtable = &_logging_allocator_vtable
@@ -381,10 +395,10 @@ struct fixed_buffer_allocator_t {
     size_t end;
 };
 
-MEM_DEF void *_fixed_buffer_allocator_alloc(void *ctx, size_t size, size_t align) {
-    assert(ctx != NULL);
-    assert(size > 0);
-    assert(align_is_valid(align));
+static void *_fixed_buffer_allocator_alloc(void *ctx, size_t size, size_t align) {
+    MEM_ASSERT(ctx != NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(align_is_valid(align));
 
     fixed_buffer_allocator_t *fba_ctx = ctx;
 
@@ -403,10 +417,10 @@ MEM_DEF void *_fixed_buffer_allocator_alloc(void *ctx, size_t size, size_t align
     return (void *) aligned_address;
 }
 
-MEM_DEF bool _fixed_buffer_allocator_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
-    assert(ctx != NULL);
-    assert(buf != NULL);
-    assert(align_is_valid(align));
+static bool _fixed_buffer_allocator_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
+    MEM_ASSERT(ctx != NULL);
+    MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(align_is_valid(align));
 
     fixed_buffer_allocator_t *fba_ctx = ctx;
 
@@ -432,11 +446,11 @@ MEM_DEF bool _fixed_buffer_allocator_resize(void *ctx, void *buf, size_t size, s
     return true;
 }
 
-MEM_DEF void _fixed_buffer_allocator_dealloc(void *ctx, void *buf, size_t size, size_t align) {
-    assert(ctx != NULL);
-    assert(buf != NULL);
-    assert(size > 0);
-    assert(align_is_valid(align));
+static void _fixed_buffer_allocator_dealloc(void *ctx, void *buf, size_t size, size_t align) {
+    MEM_ASSERT(ctx != NULL);
+    MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(align_is_valid(align));
 
     fixed_buffer_allocator_t *fba_ctx = ctx;
 
@@ -454,7 +468,7 @@ static const allocator_vtable_t _fixed_buffer_allocator_vtable = {
     ._dealloc = _fixed_buffer_allocator_dealloc
 };
 
-MEM_DEF fixed_buffer_allocator_t fixed_buffer_allocator_init(void *buf, const size_t size) {
+MEMDEF fixed_buffer_allocator_t fixed_buffer_allocator_init(void *buf, const size_t size) {
     return (fixed_buffer_allocator_t){
         .buf = buf,
         .size = size,
@@ -462,14 +476,14 @@ MEM_DEF fixed_buffer_allocator_t fixed_buffer_allocator_init(void *buf, const si
     };
 }
 
-MEM_DEF allocator_t fixed_buffer_allocator_to_allocator(fixed_buffer_allocator_t *ctx) {
+MEMDEF allocator_t fixed_buffer_allocator_to_allocator(fixed_buffer_allocator_t *ctx) {
     return (allocator_t){
         .ctx = ctx,
         .vtable = &_fixed_buffer_allocator_vtable
     };
 }
 
-MEM_DEF void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx) {
+MEMDEF void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx) {
     ctx->end = 0;
 }
 

@@ -21,7 +21,7 @@ COMMON_FLAGS = -std=c11 $(WARNINGS)
 # Flags
 # Build type flags
 CFLAGS_DEBUG = $(COMMON_FLAGS) -O0 -g -DDEBUG
-CFLAGS_RELEASE = $(COMMON_FLAGS) -O3
+CFLAGS_RELEASE = $(COMMON_FLAGS) -O3 -DNDEBUG
 CFLAGS ?= $(CFLAGS_DEBUG)  # Default to debug build
 
 # Dependency generation

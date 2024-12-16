@@ -1,15 +1,20 @@
 #ifndef MEM_H
 #define MEM_H
 
-#ifndef MEMAPI
-#define MEMAPI extern
-#endif
-
+#include <stdalign.h>
 #include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#ifndef MEMAPI
+#ifdef MEM_STATIC
+#define MEMAPI static
+#else
+#define MEMAPI extern
+#endif
 #endif
 
 typedef struct allocator_t allocator_t;
@@ -60,20 +65,26 @@ MEMAPI void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
 
 #ifdef MEM_IMPLEMENTATION
 
+#include <stdint.h>
+typedef uint32_t mem_u32;
+typedef uintptr_t mem_address;
+
+// TODO: LOGGING allocator should support working with custom printing function, not relying on std.
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #ifndef MEMIMPL
+#ifdef MEM_STATIC
+#define MEMIMPL static inline
+#else
 #define MEMIMPL extern inline
+#endif
 #endif
 
 #ifndef MEMUTIL
 #define MEMUTIL static
 #endif
-
-#include <stdalign.h>
-#include <stdint.h>
-// TODO: LOGGING allocator should support working with custom printing function, not relying on std.
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #ifndef MEM_ASSERT
 #include <assert.h>
@@ -86,13 +97,11 @@ MEMAPI void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
 
 #define MEM_NOTUSED(x) (void)(x)
 
-#ifdef MEM_DEBUG
 MEMUTIL bool _align_is_valid(const size_t align) {
     return align > 0 && (align & (align - 1)) == 0;
 }
-#endif
 
-MEMUTIL uintptr_t _address_align(const uintptr_t address, const size_t alignment) {
+MEMUTIL uintptr_t _address_align(const mem_address address, const size_t alignment) {
     return (address + (alignment - 1)) & ~(alignment - 1);
 }
 
@@ -201,7 +210,7 @@ MEMUTIL bool _memory_is_poisoned(const void *s, size_t n) {
 typedef struct {
     alignas(max_align_t)
 #ifdef MEM_DEBUG
-    uint32_t guard_start;
+    mem_u32 guard_start;
 #endif
     void *raw_memory;
     size_t total_size;
@@ -209,12 +218,17 @@ typedef struct {
     void *data_memory;
     size_t requested_size;
     size_t alignment;
-    uint32_t guard_end;
+    mem_u32 guard_end;
 #endif
 } header_t;
 
 #ifdef MEM_DEBUG
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 #define MEM_GUARD_PATTERN 0xDEADBEEF
+#else
+#define MEM_GUARD_PATTERN 0xEFBEADDE
+#endif
+
 MEMUTIL void _header_guard(header_t *header) {
     header->guard_start = MEM_GUARD_PATTERN;
     header->guard_end = MEM_GUARD_PATTERN;
@@ -225,9 +239,9 @@ MEMUTIL bool _header_is_guarded(const header_t *header) {
 }
 #endif
 
-MEMUTIL header_t *_header_get(void *buf) {
-    const uintptr_t unaligned_header_address = (uintptr_t) buf - sizeof(header_t);
-    const uintptr_t header_address = unaligned_header_address & ~(alignof(header_t) - 1);
+MEMUTIL header_t *_header_get(const void *buf) {
+    const mem_address unaligned_header_address = (mem_address) buf - sizeof(header_t);
+    const mem_address header_address = unaligned_header_address & ~(alignof(header_t) - 1);
     return (header_t *) header_address;
 }
 
@@ -258,8 +272,8 @@ MEMUTIL void *_libc_allocator_alloc(void *ctx, size_t size, size_t align) {
         return NULL;
     }
 
-    const uintptr_t base_header_address = _address_align((uintptr_t) raw_memory, alignof(header_t));
-    const uintptr_t data_address = _address_align(base_header_address + header_size, align);
+    const mem_address base_header_address = _address_align((mem_address) raw_memory, alignof(header_t));
+    const mem_address data_address = _address_align(base_header_address + header_size, align);
     void *data_memory = (void *) data_address;
 
     header_t *header = _header_get(data_memory);
@@ -272,15 +286,15 @@ MEMUTIL void *_libc_allocator_alloc(void *ctx, size_t size, size_t align) {
     header->alignment = align;
     _header_guard(header);
 
-    _memory_mark_as_poisoned(raw_memory, (uintptr_t) header - (uintptr_t) raw_memory);
+    _memory_mark_as_poisoned(raw_memory, (mem_address) header - (mem_address) raw_memory);
 
-    const uintptr_t header_end = (uintptr_t) header + header_size;
+    const mem_address header_end = (mem_address) header + header_size;
     _memory_mark_as_poisoned((void *) header_end, data_address - header_end);
 
     _memory_mark_as_allocated(data_memory, size);
 
-    const uintptr_t data_end = data_address + size;
-    _memory_mark_as_poisoned((void *) data_end, ((uintptr_t) raw_memory + total_size) - data_end);
+    const mem_address data_end = data_address + size;
+    _memory_mark_as_poisoned((void *) data_end, ((mem_address) raw_memory + total_size) - data_end);
 #endif
 
     return data_memory;
@@ -304,13 +318,13 @@ MEMUTIL void _libc_allocator_dealloc(void *ctx, void *buf, size_t size, size_t a
 #ifdef MEM_DEBUG
     MEM_ASSERT(_header_is_guarded(header));
 
-    MEM_ASSERT(_memory_is_poisoned(raw_memory, (uintptr_t) header - (uintptr_t) raw_memory));
+    MEM_ASSERT(_memory_is_poisoned(raw_memory, (mem_address) header - (mem_address) raw_memory));
 
-    const uintptr_t header_end = (uintptr_t) header + sizeof(header_t);
-    MEM_ASSERT(_memory_is_poisoned((void *) header_end, (uintptr_t) buf - header_end));
+    const mem_address header_end = (mem_address) header + sizeof(header_t);
+    MEM_ASSERT(_memory_is_poisoned((void *) header_end, (mem_address) buf - header_end));
 
-    const uintptr_t data_end = (uintptr_t) buf + size;
-    MEM_ASSERT(_memory_is_poisoned((void *) data_end, ((uintptr_t) raw_memory + header->total_size) - data_end));
+    const mem_address data_end = (mem_address) buf + size;
+    MEM_ASSERT(_memory_is_poisoned((void *) data_end, ((mem_address) raw_memory + header->total_size) - data_end));
 
     _memory_mark_as_freed(header->raw_memory, header->total_size);
 #endif
@@ -426,10 +440,10 @@ MEMUTIL void *_fixed_buffer_allocator_alloc(void *ctx, size_t size, size_t align
 
     fixed_buffer_allocator_t *fba_ctx = ctx;
 
-    const uintptr_t buf_address = (uintptr_t) fba_ctx->buf;
-    const uintptr_t current_address = buf_address + fba_ctx->end;
+    const mem_address buf_address = (mem_address) fba_ctx->buf;
+    const mem_address current_address = buf_address + fba_ctx->end;
 
-    const uintptr_t aligned_address = _address_align(current_address, align);
+    const mem_address aligned_address = _address_align(current_address, align);
 
     const size_t new_end = (aligned_address + size) - buf_address;
 
@@ -448,8 +462,8 @@ MEMUTIL bool _fixed_buffer_allocator_resize(void *ctx, void *buf, size_t size, s
 
     fixed_buffer_allocator_t *fba_ctx = ctx;
 
-    const uintptr_t fba_next_address = (uintptr_t) fba_ctx->buf + fba_ctx->end;
-    const uintptr_t buf_after_address = (uintptr_t) buf + size;
+    const mem_address fba_next_address = (mem_address) fba_ctx->buf + fba_ctx->end;
+    const mem_address buf_after_address = (mem_address) buf + size;
 
     if (buf_after_address != fba_next_address) {
         return new_size <= size;
@@ -478,8 +492,8 @@ MEMUTIL void _fixed_buffer_allocator_dealloc(void *ctx, void *buf, size_t size, 
 
     fixed_buffer_allocator_t *fba_ctx = ctx;
 
-    const uintptr_t fba_next_address = (uintptr_t) fba_ctx->buf + fba_ctx->end;
-    const uintptr_t buf_after_address = (uintptr_t) buf + size;
+    const mem_address fba_next_address = (mem_address) fba_ctx->buf + fba_ctx->end;
+    const mem_address buf_after_address = (mem_address) buf + size;
 
     if (buf_after_address == fba_next_address) {
         fba_ctx->end -= size;

@@ -48,7 +48,7 @@ void test_mixed_alignments(void) {
     dealloc_raw(allocator, ptr2, 8, alignof(max_align_t));
 }
 
-void test_alignment_requirements() {
+void test_alignment_requirements(void) {
     printf("test_alignment_requirements\n");
     const size_t test_sizes[] = {1, 8, 15, 16, 17, 32, 64, 128};
     const size_t test_aligns[] = {1, 2, 4, 8, 16, 32, 64};

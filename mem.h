@@ -4,6 +4,7 @@
 #include <stdalign.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,7 +18,18 @@ extern "C" {
 #endif
 #endif
 
-typedef struct allocator_t allocator_t;
+typedef struct {
+    void *(*_alloc)(void *ctx, size_t size, size_t align);
+
+    bool (*_resize)(void *ctx, void *buf, size_t size, size_t align, size_t new_size);
+
+    void (*_dealloc)(void *ctx, void *buf, size_t size, size_t align);
+} allocator_vtable_t;
+
+typedef struct {
+    void *ctx;
+    const allocator_vtable_t *vtable;
+} allocator_t;
 
 MEMAPI void *alloc_raw(const allocator_t *allocator, size_t size, size_t align);
 
@@ -41,15 +53,25 @@ MEMAPI const allocator_t libc_allocator;
 
 // ----- LOGGING allocator -----
 
-typedef struct logging_allocator_t logging_allocator_t;
+typedef struct {
+    const allocator_t *wrapped;
+    FILE *success_file;
+    FILE *failure_file;
+} logging_allocator_t;
 
-MEMAPI logging_allocator_t logging_allocator_init(const allocator_t *wrapped);
+MEMAPI logging_allocator_t logging_allocator_init(const allocator_t *wrapped, FILE *success_file, FILE *failure_file);
+
+MEMAPI logging_allocator_t logging_allocator_init_default(const allocator_t *wrapped);
 
 MEMAPI allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx);
 
 // ----- FIXED BUFFER allocator -----
 
-typedef struct fixed_buffer_allocator_t fixed_buffer_allocator_t;
+typedef struct {
+    void *buf;
+    const size_t size;
+    size_t end;
+} fixed_buffer_allocator_t;
 
 MEMAPI fixed_buffer_allocator_t fixed_buffer_allocator_init(void *buf, size_t size);
 
@@ -69,10 +91,8 @@ MEMAPI void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
 typedef uint32_t mem_u32;
 typedef uintptr_t mem_address;
 
-// TODO: LOGGING allocator should support working with custom printing function, not relying on std.
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 
 #ifndef MEMIMPL
 #ifdef MEM_STATIC
@@ -104,19 +124,6 @@ MEMUTIL bool _align_is_valid(const size_t align) {
 MEMUTIL uintptr_t _address_align(const mem_address address, const size_t alignment) {
     return (address + (alignment - 1)) & ~(alignment - 1);
 }
-
-typedef struct {
-    void *(*_alloc)(void *ctx, size_t size, size_t align);
-
-    bool (*_resize)(void *ctx, void *buf, size_t size, size_t align, size_t new_size);
-
-    void (*_dealloc)(void *ctx, void *buf, size_t size, size_t align);
-} allocator_vtable_t;
-
-struct allocator_t {
-    void *ctx;
-    const allocator_vtable_t *vtable;
-};
 
 MEMUTIL bool _no_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
     MEM_NOTUSED(ctx);
@@ -347,10 +354,6 @@ const allocator_t libc_allocator = _libc_allocator;
 
 // ----- LOGGING allocator -----
 
-struct logging_allocator_t {
-    const allocator_t *wrapped;
-};
-
 MEMUTIL void *_logging_allocator_alloc(void *ctx, size_t size, size_t align) {
     MEM_ASSERT(ctx != NULL);
     MEM_ASSERT(size > 0);
@@ -358,14 +361,14 @@ MEMUTIL void *_logging_allocator_alloc(void *ctx, size_t size, size_t align) {
 
     const logging_allocator_t *logging_ctx = ctx;
 
-    printf("[Logging Allocator] Allocating %zu bytes with alignment %zu\n", size, align);
-
     void *ptr = alloc_raw(logging_ctx->wrapped, size, align);
 
     if (ptr != NULL) {
-        printf("[Logging Allocator] Allocation successful at address %p\n", ptr);
+        fprintf(logging_ctx->success_file,
+                "alloc - success - size: %zu, align: %zu\n", size, align);
     } else {
-        printf("[Logging Allocator] Allocation failed\n");
+        fprintf(logging_ctx->failure_file,
+                "alloc - failure - size: %zu, align: %zu\n", size, align);
     }
 
     return ptr;
@@ -378,14 +381,14 @@ MEMUTIL bool _logging_allocator_resize(void *ctx, void *buf, size_t size, size_t
 
     const logging_allocator_t *logging_ctx = ctx;
 
-    printf("[Logging Allocator] Resizing buffer at %p to %zu bytes with alignment %zu\n", buf, new_size, align);
-
     const bool success = resize_raw(logging_ctx->wrapped, buf, size, align, new_size);
 
     if (success) {
-        printf("[Logging Allocator] Resize successful\n");
+        fprintf(logging_ctx->success_file,
+                "resize - success - size: %zu, new_size: %zu, align: %zu\n", size, new_size, align);
     } else {
-        printf("[Logging Allocator] Resize failed\n");
+        fprintf(logging_ctx->failure_file,
+                "resize - failure - size: %zu, new_size: %zu, align: %zu\n", size, new_size, align);
     }
 
     return success;
@@ -399,11 +402,10 @@ MEMUTIL void _logging_allocator_dealloc(void *ctx, void *buf, size_t size, size_
 
     const logging_allocator_t *logging_ctx = ctx;
 
-    printf("[Logging Allocator] Freeing buffer at %p with alignment %zu\n", buf, align);
-
     dealloc_raw(logging_ctx->wrapped, buf, size, align);
 
-    printf("[Logging Allocator] Free successful\n");
+    fprintf(logging_ctx->failure_file,
+            "free - success - size: %zu, align: %zu\n", size, align);
 }
 
 MEMUTIL const allocator_vtable_t _logging_allocator_vtable = {
@@ -412,13 +414,25 @@ MEMUTIL const allocator_vtable_t _logging_allocator_vtable = {
     ._dealloc = _logging_allocator_dealloc
 };
 
-MEMIMPL logging_allocator_t logging_allocator_init(const allocator_t *wrapped) {
+MEMIMPL logging_allocator_t logging_allocator_init(const allocator_t *wrapped, FILE *success_file, FILE *failure_file) {
+    MEM_ASSERT(wrapped != NULL);
+    MEM_ASSERT(success_file != NULL);
+    MEM_ASSERT(failure_file != NULL);
+
     return (logging_allocator_t){
-        .wrapped = wrapped
+        .wrapped = wrapped,
+        .success_file = success_file,
+        .failure_file = failure_file
     };
 }
 
+MEMIMPL logging_allocator_t logging_allocator_init_default(const allocator_t *wrapped) {
+    return logging_allocator_init(wrapped, stdout, stderr);
+}
+
 MEMIMPL allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx) {
+    MEM_ASSERT(ctx != NULL);
+
     return (allocator_t){
         .ctx = ctx,
         .vtable = &_logging_allocator_vtable
@@ -426,12 +440,6 @@ MEMIMPL allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx) {
 }
 
 // ----- FIXED BUFFER allocator -----
-
-struct fixed_buffer_allocator_t {
-    void *buf;
-    const size_t size;
-    size_t end;
-};
 
 MEMUTIL void *_fixed_buffer_allocator_alloc(void *ctx, size_t size, size_t align) {
     MEM_ASSERT(ctx != NULL);

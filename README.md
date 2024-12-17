@@ -1,7 +1,36 @@
 # Memory Allocator Library
 
-A single-header [STB-style](https://github.com/nothings/stb) memory allocation library inspired by [Zig](https://ziglang.org/) allocators design.
+A single-header [STB-style](https://github.com/nothings/stb) memory allocation library inspired
+by [Zig](https://ziglang.org/) allocators design.
 **Currently, a work in progress.**
+
+## Rationale
+
+Memory management is one of the most critical aspects of C programming, directly impacting program correctness,
+performance, and maintainability. While C gives developers complete control over memory, this control often leads to
+diverse and inconsistent allocation patterns across codebases.
+
+This library addresses several key challenges:
+
+1. **Unified Interface**: By providing a consistent interface for all allocation strategies, the library makes code more
+   readable and maintainable. Developers can focus on _what_ they're allocating rather than _how_.
+
+2. **Pluggable Allocators**: Different applications have different memory requirements. Some need speed, others need to
+   work with fixed memory, and others need detailed tracking. This library allows switching allocation strategies
+   without changing the application code.
+
+3. **Type Safety**: The convenience macros provide type-safe allocation, reducing common errors while maintaining C's
+   direct memory control.
+
+4. **Debugging Support**: Built-in support for logging and debugging makes tracking memory issues easier without
+   modifying application code.
+
+5. **Minimal Overhead**: The library is designed to add minimal overhead when using basic allocators, while providing powerful
+   features when needed.
+
+By standardizing memory allocation patterns, this library helps developers focus on their application logic while
+maintaining full control over memory management strategies. The ability to easily swap allocators makes it possible to
+optimize memory usage for different scenarios without widespread code changes.
 
 ## Features
 
@@ -14,8 +43,8 @@ A single-header [STB-style](https://github.com/nothings/stb) memory allocation l
 ## Currently Supported Allocators
 
 - LIBC allocator (malloc/free wrapper)
+- Logging allocator
 - Fixed buffer allocator
-- Simple logging allocator
 
 ## Planned Allocators
 
@@ -49,7 +78,8 @@ const allocator_t libc_allocator;
 // ----- LOGGING allocator -----
 typedef struct logging_allocator_t logging_allocator_t;
 
-logging_allocator_t logging_allocator_init(const allocator_t *wrapped);
+logging_allocator_t logging_allocator_init(const allocator_t *wrapped, FILE *success_file, FILE *failure_file);
+logging_allocator_t logging_allocator_init_default(const allocator_t *wrapped);
 allocator_t         logging_allocator_to_allocator(logging_allocator_t *ctx);
 
 // ----- FIXED BUFFER allocator -----
@@ -74,7 +104,7 @@ typedef struct MyStruct {
 
 int main(void) {
     // Initialize logging allocator wrapping libc allocator
-    logging_allocator_t logging = logging_allocator_init(&libc_allocator);
+    logging_allocator_t logging = logging_allocator_init(&libc_allocator, stdout, stderr);
     allocator_t allocator = logging_allocator_to_allocator(&logging);
 
     // Basic allocation
@@ -106,8 +136,13 @@ Custom allocators can be implemented by providing a vtable with allocation funct
 
 ```c
 typedef struct {
-    void *(*_alloc)(void *ctx, size_t size, size_t align);
-    bool (*_resize)(void *ctx, void *buf, size_t size, size_t align, size_t new_size);
-    void (*_dealloc)(void *ctx, void *buf, size_t size, size_t align);
+    void *(*_alloc  )(void *ctx, size_t size, size_t align);
+    bool  (*_resize )(void *ctx, void *buf, size_t size, size_t align, size_t new_size);
+    void  (*_dealloc)(void *ctx, void *buf, size_t size, size_t align);
 } allocator_vtable_t;
+
+typedef struct {
+    void *ctx;
+    const allocator_vtable_t *vtable;
+} allocator_t;
 ```

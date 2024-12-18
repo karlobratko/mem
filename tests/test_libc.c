@@ -108,16 +108,27 @@ void test_extreme_sizes(void) {
     }
 }
 
-void test_resize_behavior(void) {
-    printf("test_resize_behavior\n");
+void test_resize_grow_behavior(void) {
+    printf("test_resize_grow_behavior\n");
     void *ptr = alloc_raw(allocator, 8, 8);
     assert(ptr != NULL);
 
-    // LIBC allocator doesn't support resize, should return false
+    // LIBC allocator doesn't support growing, should return false
     const bool resize_result = resize_raw(allocator, ptr, 8, 8, 16);
     assert(resize_result == false);
 
     dealloc_raw(allocator, ptr, 8, 8);
+}
+
+void test_resize_shrink_behavior(void) {
+    printf("test_resize_shrink_behavior\n");
+    void *ptr = alloc_raw(allocator, 8, 8);
+    assert(ptr != NULL);
+
+    const bool resize_result = resize_raw(allocator, ptr, 8, 8, 4);
+    assert(resize_result == true);
+
+    dealloc_raw(allocator, ptr, 4, 8);
 }
 
 int main(void) {
@@ -126,7 +137,8 @@ int main(void) {
     test_alignment_requirements();
     test_multiple_allocations();
     test_extreme_sizes();
-    test_resize_behavior();
+    test_resize_grow_behavior();
+    test_resize_shrink_behavior();
 
     return EXIT_SUCCESS;
 }

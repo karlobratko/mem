@@ -85,6 +85,7 @@ MEMAPI void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
 
 #endif
 
+#define MEM_IMPLEMENTATION
 #ifdef MEM_IMPLEMENTATION
 
 #ifndef MEMIMPL
@@ -189,6 +190,10 @@ MEMIMPL bool resize_raw(const allocator_t *allocator, void *buf, const size_t si
 
     if (size == 0) {
         return false;
+    }
+
+    if (new_size == size) {
+        return true;
     }
 
     return allocator->vtable->_resize(allocator->ctx, buf, size, align, new_size);
@@ -333,9 +338,38 @@ MEMUTIL void *mem__libc_allocator_alloc(void *ctx, size_t size, size_t align) {
 #endif
 }
 
+MEMUTIL bool mem__libc_allocator_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
+    MEM_NOTUSED(ctx);
+    MEM_NOTUSED(align);
+
+    MEM_ASSERT(ctx == NULL);
+    MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(new_size > 0);
+    MEM_ASSERT(size != new_size);
+    MEM_ASSERT(size != new_size);
+    MEM_ASSERT(mem__align_is_valid(align));
+
+    if (new_size > size) {
+        // TODO: We could consider enabling growing to fill excess bytes on the right of data between requested_size and total_size allocated for aligning.
+        return false;
+    }
+
+#ifdef MEM_DEBUG
+    header_t *header = mem__header_get(buf);
+    header->requested_size = new_size;
+
+    const mem_uptr data_end = (uintptr_t) buf + new_size;
+    mem__memory_mark_as_poisoned((void *) data_end, size - new_size);
+#endif
+
+    return true;
+}
+
 MEMUTIL void mem__libc_allocator_dealloc(void *ctx, void *buf, size_t size, size_t align) {
     MEM_NOTUSED(ctx);
     MEM_NOTUSED(size);
+    MEM_NOTUSED(align);
 
     MEM_ASSERT(ctx == NULL);
     MEM_ASSERT(buf != NULL);
@@ -355,7 +389,7 @@ MEMUTIL void mem__libc_allocator_dealloc(void *ctx, void *buf, size_t size, size
     const mem_uptr header_end = (mem_uptr) header + sizeof(header_t);
     MEM_ASSERT(mem__memory_is_poisoned((void *) header_end, (mem_uptr) buf - header_end));
 
-    const mem_uptr data_end = (mem_uptr) buf + size;
+    const mem_uptr data_end = (mem_uptr) buf + header->requested_size;
     MEM_ASSERT(mem__memory_is_poisoned((void *) data_end, ((mem_uptr) raw_memory + header->total_size) - data_end));
 
     mem__memory_mark_as_freed(header->raw_memory, header->total_size);
@@ -366,7 +400,7 @@ MEMUTIL void mem__libc_allocator_dealloc(void *ctx, void *buf, size_t size, size
 
 MEMUTIL const allocator_vtable_t mem__libc_allocator_vtable = {
     ._alloc = mem__libc_allocator_alloc,
-    ._resize = mem__no_resize,
+    ._resize = mem__libc_allocator_resize,
     ._dealloc = mem__libc_allocator_dealloc
 };
 
@@ -405,6 +439,9 @@ MEMUTIL void *mem__logging_allocator_alloc(void *ctx, size_t size, size_t align)
 MEMUTIL bool mem__logging_allocator_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
     MEM_ASSERT(ctx != NULL);
     MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(new_size > 0);
+    MEM_ASSERT(size != new_size);
     MEM_ASSERT(mem__align_is_valid(align));
 
     const logging_allocator_t *logging_ctx = ctx;
@@ -510,8 +547,13 @@ MEMUTIL void *mem__fixed_buffer_allocator_alloc(void *ctx, size_t size, size_t a
 }
 
 MEMUTIL bool mem__fixed_buffer_allocator_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
+    MEM_NOTUSED(align);
+
     MEM_ASSERT(ctx != NULL);
     MEM_ASSERT(buf != NULL);
+    MEM_ASSERT(size > 0);
+    MEM_ASSERT(new_size > 0);
+    MEM_ASSERT(size != new_size);
     MEM_ASSERT(mem__align_is_valid(align));
 
     fixed_buffer_allocator_t *fba_ctx = ctx;
@@ -538,6 +580,8 @@ MEMUTIL bool mem__fixed_buffer_allocator_resize(void *ctx, void *buf, size_t siz
 }
 
 MEMUTIL void mem__fixed_buffer_allocator_dealloc(void *ctx, void *buf, size_t size, size_t align) {
+    MEM_NOTUSED(align);
+
     MEM_ASSERT(ctx != NULL);
     MEM_ASSERT(buf != NULL);
     MEM_ASSERT(size > 0);

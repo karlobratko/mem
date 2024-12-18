@@ -35,8 +35,8 @@ void test_alloc_assertions(void) {
     assert(assert_count == 3);
 }
 
-void test_realloc_assertions(void) {
-    printf("test_realloc_assertions\n");
+void test_resize_assertions(void) {
+    printf("test_resize_assertions\n");
     assert_count_reset();
 
     const size_t size = 8;
@@ -108,7 +108,7 @@ void test_dealloc_assertions(void) {
 
 int main(void) {
     test_alloc_assertions();
-    test_realloc_assertions();
+    test_resize_assertions();
     test_dealloc_assertions();
 
     return EXIT_SUCCESS;

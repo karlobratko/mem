@@ -85,7 +85,6 @@ MEMAPI void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
 
 #endif
 
-#define MEM_IMPLEMENTATION
 #ifdef MEM_IMPLEMENTATION
 
 #ifndef MEMIMPL

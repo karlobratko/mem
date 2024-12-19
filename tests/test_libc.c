@@ -116,6 +116,7 @@ void test_resize_grow_behavior(void) {
     // LIBC allocator doesn't support growing, should return false
     const bool resize_result = resize_raw(allocator, ptr, 8, 8, 16);
     assert(resize_result == false);
+    (void) resize_result;
 
     dealloc_raw(allocator, ptr, 8, 8);
 }
@@ -127,6 +128,7 @@ void test_resize_shrink_behavior(void) {
 
     const bool resize_result = resize_raw(allocator, ptr, 8, 8, 4);
     assert(resize_result == true);
+    (void) resize_result;
 
     dealloc_raw(allocator, ptr, 4, 8);
 }

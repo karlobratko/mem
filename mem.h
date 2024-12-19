@@ -37,6 +37,8 @@ MEMAPI bool resize_raw(const allocator_t *allocator, void *buf, size_t size, siz
 
 MEMAPI void dealloc_raw(const allocator_t *allocator, void *buf, size_t size, size_t align);
 
+// TODO: Add realloc functionality, which combines resize, alloc and free.
+
 #define alloc(allocator, type, len) (alloc_raw((allocator), (sizeof(type) * len), alignof(type)))
 
 #define resize(allocator, type, buf, len, new_len) (resize_raw((allocator), (buf), (sizeof(type) * len), alignof(type), (sizeof(type) * new_len)))
@@ -65,19 +67,19 @@ MEMAPI logging_allocator_t logging_allocator_init_default(const allocator_t *wra
 
 MEMAPI allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx);
 
-// ----- FIXED BUFFER allocator -----
+// ----- ARENA allocator -----
 
 typedef struct {
     void *buf;
     const size_t size;
     size_t end;
-} fixed_buffer_allocator_t;
+} arena_allocator_t;
 
-MEMAPI fixed_buffer_allocator_t fixed_buffer_allocator_init(void *buf, size_t size);
+MEMAPI arena_allocator_t arena_allocator_init(void *buf, size_t size);
 
-MEMAPI allocator_t fixed_buffer_allocator_to_allocator(fixed_buffer_allocator_t *ctx);
+MEMAPI allocator_t arena_allocator_to_allocator(arena_allocator_t *ctx);
 
-MEMAPI void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
+MEMAPI void arena_allocator_reset(arena_allocator_t *ctx);
 
 #ifdef __cplusplus
 }
@@ -85,6 +87,7 @@ MEMAPI void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
 
 #endif
 
+//#define MEM_IMPLEMENTATION
 #ifdef MEM_IMPLEMENTATION
 
 #ifndef MEMIMPL
@@ -111,8 +114,8 @@ MEMAPI void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
 #define MEM_NOTUSED(x) (void)(x)
 
 #include <stdint.h>
-typedef uint32_t mem_u32;
-typedef uintptr_t mem_uptr;
+typedef uint32_t mem__u32;
+typedef uintptr_t mem__uptr;
 
 #ifndef MEM_BYTE_ORDER
 #define MEM_BYTE_ORDER
@@ -146,20 +149,41 @@ MEMUTIL bool mem__align_is_valid(const size_t align) {
     return align > 0 && (align & (align - 1)) == 0;
 }
 
-MEMUTIL uintptr_t mem__address_align(const mem_uptr address, const size_t alignment) {
-    return (address + (alignment - 1)) & ~(alignment - 1);
+MEMUTIL mem__uptr mem__align_backward(const mem__uptr address, const size_t alignment) {
+    MEM_ASSERT(mem__align_is_valid(alignment));
+
+    return address & ~(alignment - 1);
 }
 
-MEMUTIL bool mem__no_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
+MEMUTIL bool mem__is_aligned(const mem__uptr address, const size_t alignment) {
+    MEM_ASSERT(mem__align_is_valid(alignment));
+
+    return mem__align_backward(address, alignment) == address;
+}
+
+MEMUTIL mem__uptr mem__align_forward(const mem__uptr address, const size_t alignment) {
+    MEM_ASSERT(mem__align_is_valid(alignment));
+
+    return mem__align_backward(address + (alignment - 1), alignment);
+}
+
+MEMUTIL size_t mem__align_pointer_offset(const void *ptr, const size_t alignment) {
+    MEM_ASSERT(mem__align_is_valid(alignment));
+
+    return (mem__uptr) ptr & (alignment - 1);
+}
+
+MEMUTIL bool mem__noop_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
     MEM_NOTUSED(ctx);
     MEM_NOTUSED(buf);
     MEM_NOTUSED(size);
     MEM_NOTUSED(align);
     MEM_NOTUSED(new_size);
+
     return false;
 }
 
-MEMUTIL void mem__no_dealloc(void *ctx, void *buf, size_t size, size_t align) {
+MEMUTIL void mem__noop_dealloc(void *ctx, void *buf, size_t size, size_t align) {
     MEM_NOTUSED(ctx);
     MEM_NOTUSED(buf);
     MEM_NOTUSED(size);
@@ -218,19 +242,19 @@ MEMIMPL void dealloc_raw(const allocator_t *allocator, void *buf, const size_t s
 #define MEM_ALLOC_BYTE 0xAA
 #define MEM_FREED_BYTE 0xDD
 
-MEMUTIL void mem__memory_mark_as_poisoned(void *s, size_t n) {
+MEMUTIL void mem__mark_as_poisoned(void *s, size_t n) {
     memset(s, MEM_POISON_BYTE, n);
 }
 
-MEMUTIL void mem__memory_mark_as_allocated(void *s, size_t n) {
+MEMUTIL void mem__mark_as_allocated(void *s, size_t n) {
     memset(s, MEM_ALLOC_BYTE, n);
 }
 
-MEMUTIL void mem__memory_mark_as_freed(void *s, size_t n) {
+MEMUTIL void mem__mark_as_freed(void *s, size_t n) {
     memset(s, MEM_FREED_BYTE, n);
 }
 
-MEMUTIL bool mem__memory_is_poisoned(const void *s, size_t n) {
+MEMUTIL bool mem__is_poisoned(const void *s, size_t n) {
     const unsigned char *p = s;
 
     while (n-- > 0) {
@@ -246,7 +270,7 @@ MEMUTIL bool mem__memory_is_poisoned(const void *s, size_t n) {
 typedef struct {
     alignas(max_align_t)
 #ifdef MEM_DEBUG
-    mem_u32 guard_start;
+    mem__u32 guard_start;
 #endif
     void *raw_memory;
     size_t total_size;
@@ -254,9 +278,9 @@ typedef struct {
     void *data_memory;
     size_t requested_size;
     size_t alignment;
-    mem_u32 guard_end;
+    mem__u32 guard_end;
 #endif
-} header_t;
+} mem__libc_header_t;
 
 #ifdef MEM_DEBUG
 #if MEM_BIG_ENDIAN
@@ -265,20 +289,19 @@ typedef struct {
 #define MEM_GUARD_PATTERN 0xEFBEADDE
 #endif
 
-MEMUTIL void mem__header_guard(header_t *header) {
+MEMUTIL void mem__libc_header_guard(mem__libc_header_t *header) {
     header->guard_start = MEM_GUARD_PATTERN;
     header->guard_end = MEM_GUARD_PATTERN;
 }
 
-MEMUTIL bool mem__header_is_guarded(const header_t *header) {
+MEMUTIL bool mem__libc_header_is_guarded(const mem__libc_header_t *header) {
     return header->guard_start == MEM_GUARD_PATTERN && header->guard_end == MEM_GUARD_PATTERN;
 }
 #endif
 
-MEMUTIL header_t *mem__header_get(const void *buf) {
-    const mem_uptr unaligned_header_address = (mem_uptr) buf - sizeof(header_t);
-    const mem_uptr header_address = unaligned_header_address & ~(alignof(header_t) - 1);
-    return (header_t *) header_address;
+MEMUTIL mem__libc_header_t *mem__libc_header_get(const void *buf) {
+    return (mem__libc_header_t *) mem__align_backward((mem__uptr) buf - sizeof(mem__libc_header_t),
+                                                      alignof(mem__libc_header_t));
 }
 
 MEMUTIL void *mem__libc_allocator_alloc(void *ctx, size_t size, size_t align) {
@@ -296,9 +319,9 @@ MEMUTIL void *mem__libc_allocator_alloc(void *ctx, size_t size, size_t align) {
 
     return raw_memory;
 #else
-    const size_t header_size = sizeof(header_t);
+    const size_t header_size = sizeof(mem__libc_header_t);
 
-    const size_t header_padding = alignof(header_t) - 1;
+    const size_t header_padding = alignof(mem__libc_header_t) - 1;
     const size_t data_padding = align - 1;
 
     const size_t total_size = header_padding + header_size + data_padding + size;
@@ -308,11 +331,11 @@ MEMUTIL void *mem__libc_allocator_alloc(void *ctx, size_t size, size_t align) {
         return NULL;
     }
 
-    const mem_uptr base_header_address = mem__address_align((mem_uptr) raw_memory, alignof(header_t));
-    const mem_uptr data_address = mem__address_align(base_header_address + header_size, align);
+    const mem__uptr base_header_address = mem__align_forward((mem__uptr) raw_memory, alignof(mem__libc_header_t));
+    const mem__uptr data_address = mem__align_forward(base_header_address + header_size, align);
     void *data_memory = (void *) data_address;
 
-    header_t *header = mem__header_get(data_memory);
+    mem__libc_header_t *header = mem__libc_header_get(data_memory);
     header->raw_memory = raw_memory;
     header->total_size = total_size;
 
@@ -320,17 +343,17 @@ MEMUTIL void *mem__libc_allocator_alloc(void *ctx, size_t size, size_t align) {
     header->data_memory = data_memory;
     header->requested_size = size;
     header->alignment = align;
-    mem__header_guard(header);
+    mem__libc_header_guard(header);
 
-    mem__memory_mark_as_poisoned(raw_memory, (mem_uptr) header - (mem_uptr) raw_memory);
+    mem__mark_as_poisoned(raw_memory, (mem__uptr) header - (mem__uptr) raw_memory);
 
-    const mem_uptr header_end = (mem_uptr) header + header_size;
-    mem__memory_mark_as_poisoned((void *) header_end, data_address - header_end);
+    const mem__uptr header_end = (mem__uptr) header + header_size;
+    mem__mark_as_poisoned((void *) header_end, data_address - header_end);
 
-    mem__memory_mark_as_allocated(data_memory, size);
+    mem__mark_as_allocated(data_memory, size);
 
-    const mem_uptr data_end = data_address + size;
-    mem__memory_mark_as_poisoned((void *) data_end, ((mem_uptr) raw_memory + total_size) - data_end);
+    const mem__uptr data_end = data_address + size;
+    mem__mark_as_poisoned((void *) data_end, ((mem__uptr) raw_memory + total_size) - data_end);
 #endif
 
     return data_memory;
@@ -354,12 +377,12 @@ MEMUTIL bool mem__libc_allocator_resize(void *ctx, void *buf, size_t size, size_
         return false;
     }
 
-#ifdef MEM_DEBUG
-    header_t *header = mem__header_get(buf);
+#if !defined(PREFER_LIBC_ALIGNED_ALLOC) && defined(MEM_DEBUG)
+    mem__libc_header_t *header = mem__libc_header_get(buf);
     header->requested_size = new_size;
 
-    const mem_uptr data_end = (uintptr_t) buf + new_size;
-    mem__memory_mark_as_poisoned((void *) data_end, size - new_size);
+    const mem__uptr data_end = (mem__uptr) buf + new_size;
+    mem__mark_as_poisoned((void *) data_end, size - new_size);
 #endif
 
     return true;
@@ -378,20 +401,20 @@ MEMUTIL void mem__libc_allocator_dealloc(void *ctx, void *buf, size_t size, size
 #ifdef PREFER_LIBC_ALIGNED_ALLOC
     free(buf);
 #else
-    const header_t *header = mem__header_get(buf);
+    const mem__libc_header_t *header = mem__libc_header_get(buf);
     void *raw_memory = header->raw_memory;
 #ifdef MEM_DEBUG
-    MEM_ASSERT(mem__header_is_guarded(header));
+    MEM_ASSERT(mem__libc_header_is_guarded(header));
 
-    MEM_ASSERT(mem__memory_is_poisoned(raw_memory, (mem_uptr) header - (mem_uptr) raw_memory));
+    MEM_ASSERT(mem__is_poisoned(raw_memory, (mem__uptr) header - (mem__uptr) raw_memory));
 
-    const mem_uptr header_end = (mem_uptr) header + sizeof(header_t);
-    MEM_ASSERT(mem__memory_is_poisoned((void *) header_end, (mem_uptr) buf - header_end));
+    const mem__uptr header_end = (mem__uptr) header + sizeof(mem__libc_header_t);
+    MEM_ASSERT(mem__is_poisoned((void *) header_end, (mem__uptr) buf - header_end));
 
-    const mem_uptr data_end = (mem_uptr) buf + header->requested_size;
-    MEM_ASSERT(mem__memory_is_poisoned((void *) data_end, ((mem_uptr) raw_memory + header->total_size) - data_end));
+    const mem__uptr data_end = (mem__uptr) buf + header->requested_size;
+    MEM_ASSERT(mem__is_poisoned((void *) data_end, ((mem__uptr) raw_memory + header->total_size) - data_end));
 
-    mem__memory_mark_as_freed(header->raw_memory, header->total_size);
+    mem__mark_as_freed(header->raw_memory, header->total_size);
 #endif
     free(raw_memory);
 #endif
@@ -417,18 +440,18 @@ MEMUTIL void *mem__logging_allocator_alloc(void *ctx, size_t size, size_t align)
     MEM_ASSERT(size > 0);
     MEM_ASSERT(mem__align_is_valid(align));
 
-    const logging_allocator_t *logging_ctx = ctx;
-    MEM_ASSERT(logging_ctx->wrapped != NULL);
-    MEM_ASSERT(logging_ctx->success_file != NULL);
-    MEM_ASSERT(logging_ctx->failure_file != NULL);
+    const logging_allocator_t *logging = ctx;
+    MEM_ASSERT(logging->wrapped != NULL);
+    MEM_ASSERT(logging->success_file != NULL);
+    MEM_ASSERT(logging->failure_file != NULL);
 
-    void *ptr = alloc_raw(logging_ctx->wrapped, size, align);
+    void *ptr = alloc_raw(logging->wrapped, size, align);
 
     if (ptr != NULL) {
-        fprintf(logging_ctx->success_file,
+        fprintf(logging->success_file,
                 "alloc - success - size: %zu, align: %zu\n", size, align);
     } else {
-        fprintf(logging_ctx->failure_file,
+        fprintf(logging->failure_file,
                 "alloc - failure - size: %zu, align: %zu\n", size, align);
     }
 
@@ -443,18 +466,18 @@ MEMUTIL bool mem__logging_allocator_resize(void *ctx, void *buf, size_t size, si
     MEM_ASSERT(size != new_size);
     MEM_ASSERT(mem__align_is_valid(align));
 
-    const logging_allocator_t *logging_ctx = ctx;
-    MEM_ASSERT(logging_ctx->wrapped != NULL);
-    MEM_ASSERT(logging_ctx->success_file != NULL);
-    MEM_ASSERT(logging_ctx->failure_file != NULL);
+    const logging_allocator_t *logging = ctx;
+    MEM_ASSERT(logging->wrapped != NULL);
+    MEM_ASSERT(logging->success_file != NULL);
+    MEM_ASSERT(logging->failure_file != NULL);
 
-    const bool success = resize_raw(logging_ctx->wrapped, buf, size, align, new_size);
+    const bool success = resize_raw(logging->wrapped, buf, size, align, new_size);
 
     if (success) {
-        fprintf(logging_ctx->success_file,
+        fprintf(logging->success_file,
                 "resize - success - size: %zu, new_size: %zu, align: %zu\n", size, new_size, align);
     } else {
-        fprintf(logging_ctx->failure_file,
+        fprintf(logging->failure_file,
                 "resize - failure - size: %zu, new_size: %zu, align: %zu\n", size, new_size, align);
     }
 
@@ -467,14 +490,14 @@ MEMUTIL void mem__logging_allocator_dealloc(void *ctx, void *buf, size_t size, s
     MEM_ASSERT(size > 0);
     MEM_ASSERT(mem__align_is_valid(align));
 
-    const logging_allocator_t *logging_ctx = ctx;
-    MEM_ASSERT(logging_ctx->wrapped != NULL);
-    MEM_ASSERT(logging_ctx->success_file != NULL);
-    MEM_ASSERT(logging_ctx->failure_file != NULL);
+    const logging_allocator_t *logging = ctx;
+    MEM_ASSERT(logging->wrapped != NULL);
+    MEM_ASSERT(logging->success_file != NULL);
+    MEM_ASSERT(logging->failure_file != NULL);
 
-    dealloc_raw(logging_ctx->wrapped, buf, size, align);
+    dealloc_raw(logging->wrapped, buf, size, align);
 
-    fprintf(logging_ctx->failure_file,
+    fprintf(logging->failure_file,
             "free - success - size: %zu, align: %zu\n", size, align);
 }
 
@@ -515,113 +538,59 @@ MEMIMPL allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx) {
     };
 }
 
-// ----- FIXED BUFFER allocator -----
+// ----- ARENA allocator -----
 
-MEMUTIL bool mem__is_last_allocation(const fixed_buffer_allocator_t *fba_ctx, const void *buf, const size_t size) {
-    return (mem_uptr) buf + size == (mem_uptr) fba_ctx->buf + fba_ctx->end;
-}
-
-MEMUTIL void *mem__fixed_buffer_allocator_alloc(void *ctx, size_t size, size_t align) {
+MEMUTIL void *mem__arena_allocator_alloc(void *ctx, size_t size, size_t align) {
     MEM_ASSERT(ctx != NULL);
     MEM_ASSERT(size > 0);
     MEM_ASSERT(mem__align_is_valid(align));
 
-    fixed_buffer_allocator_t *fba_ctx = ctx;
-    MEM_ASSERT(fba_ctx->buf != NULL);
-    MEM_ASSERT(fba_ctx->size > 0);
+    arena_allocator_t *arena = ctx;
+    MEM_ASSERT(arena->buf != NULL);
+    MEM_ASSERT(arena->size > 0);
 
-    const mem_uptr buf_address = (mem_uptr) fba_ctx->buf;
-    const mem_uptr current_address = buf_address + fba_ctx->end;
+    const mem__uptr buf_address = (mem__uptr) arena->buf;
+    const mem__uptr current_address = buf_address + arena->end;
 
-    const mem_uptr aligned_address = mem__address_align(current_address, align);
+    const mem__uptr aligned_address = mem__align_forward(current_address, align);
 
     const size_t new_end = (aligned_address + size) - buf_address;
 
-    if (new_end > fba_ctx->size) {
+    if (new_end > arena->size) {
         return NULL;
     }
 
-    fba_ctx->end = new_end;
+    arena->end = new_end;
     return (void *) aligned_address;
 }
 
-MEMUTIL bool mem__fixed_buffer_allocator_resize(void *ctx, void *buf, size_t size, size_t align, size_t new_size) {
-    MEM_NOTUSED(align);
-
-    MEM_ASSERT(ctx != NULL);
-    MEM_ASSERT(buf != NULL);
-    MEM_ASSERT(size > 0);
-    MEM_ASSERT(new_size > 0);
-    MEM_ASSERT(size != new_size);
-    MEM_ASSERT(mem__align_is_valid(align));
-
-    fixed_buffer_allocator_t *fba_ctx = ctx;
-    MEM_ASSERT(fba_ctx->buf != NULL);
-    MEM_ASSERT(fba_ctx->size > 0);
-
-    if (!mem__is_last_allocation(fba_ctx, buf, size)) {
-        return new_size <= size;
-    }
-
-    if (new_size <= size) {
-        const size_t sub = size - new_size;
-        fba_ctx->end -= sub;
-        return true;
-    }
-
-    const size_t add = new_size - size;
-    if (add + fba_ctx->end > fba_ctx->size) {
-        return false;
-    }
-
-    fba_ctx->end += add;
-    return true;
-}
-
-MEMUTIL void mem__fixed_buffer_allocator_dealloc(void *ctx, void *buf, size_t size, size_t align) {
-    MEM_NOTUSED(align);
-
-    MEM_ASSERT(ctx != NULL);
-    MEM_ASSERT(buf != NULL);
-    MEM_ASSERT(size > 0);
-    MEM_ASSERT(mem__align_is_valid(align));
-
-    fixed_buffer_allocator_t *fba_ctx = ctx;
-    MEM_ASSERT(fba_ctx->buf != NULL);
-    MEM_ASSERT(fba_ctx->size > 0);
-
-    if (mem__is_last_allocation(fba_ctx, buf, size)) {
-        fba_ctx->end -= size;
-    }
-}
-
-MEMUTIL const allocator_vtable_t mem__fixed_buffer_allocator_vtable = {
-    ._alloc = mem__fixed_buffer_allocator_alloc,
-    ._resize = mem__fixed_buffer_allocator_resize,
-    ._dealloc = mem__fixed_buffer_allocator_dealloc
+MEMUTIL const allocator_vtable_t mem__arena_allocator_vtable = {
+    ._alloc = mem__arena_allocator_alloc,
+    ._resize = mem__noop_resize,
+    ._dealloc = mem__noop_dealloc
 };
 
-MEMIMPL fixed_buffer_allocator_t fixed_buffer_allocator_init(void *buf, const size_t size) {
+MEMIMPL arena_allocator_t arena_allocator_init(void *buf, const size_t size) {
     MEM_ASSERT(buf != NULL);
     MEM_ASSERT(size > 0);
 
-    return (fixed_buffer_allocator_t){
+    return (arena_allocator_t){
         .buf = buf,
         .size = size,
         .end = 0
     };
 }
 
-MEMIMPL allocator_t fixed_buffer_allocator_to_allocator(fixed_buffer_allocator_t *ctx) {
+MEMIMPL allocator_t arena_allocator_to_allocator(arena_allocator_t *ctx) {
     MEM_ASSERT(ctx != NULL);
 
     return (allocator_t){
         .ctx = ctx,
-        .vtable = &mem__fixed_buffer_allocator_vtable
+        .vtable = &mem__arena_allocator_vtable
     };
 }
 
-MEMIMPL void fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx) {
+MEMIMPL void arena_allocator_reset(arena_allocator_t *ctx) {
     MEM_ASSERT(ctx != NULL);
 
     ctx->end = 0;

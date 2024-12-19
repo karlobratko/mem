@@ -1,7 +1,9 @@
 # Memory Allocator Library
 
 A single-header [STB-style](https://github.com/nothings/stb) memory allocation library inspired
-by [Zig](https://ziglang.org/) allocators design.
+by [Zig](https://ziglang.org/) allocators design
+and [Memory Allocation Strategies](https://www.gingerbill.org/series/memory-allocation-strategies/) article series by
+Ginger Bill.
 **Currently, a work in progress.**
 
 ## Rationale
@@ -25,8 +27,8 @@ This library addresses several key challenges:
 4. **Debugging Support**: Built-in support for logging and debugging makes tracking memory issues easier without
    modifying application code.
 
-5. **Minimal Overhead**: The library is designed to add minimal overhead when using basic allocators, while providing powerful
-   features when needed.
+5. **Minimal Overhead**: The library is designed to add minimal overhead when using basic allocators, while providing
+   powerful features when needed.
 
 By standardizing memory allocation patterns, this library helps developers focus on their application logic while
 maintaining full control over memory management strategies. The ability to easily swap allocators makes it possible to
@@ -40,17 +42,36 @@ optimize memory usage for different scenarios without widespread code changes.
 - Zero dependencies beyond C standard library
 - C11 or later required for `alignas` support
 
-## Currently Supported Allocators
+## Allocator Types
 
-- LIBC allocator (malloc/free wrapper)
-- Logging allocator
-- Fixed buffer allocator
+### Currently Supported
 
-## Planned Allocators
+#### LIBC Allocator
 
-- Arena allocator
-- Stack allocator
-- Pool allocator
+- Wrapper around standard malloc/free
+- Support for aligned allocations
+- Optional debug features for memory tracking
+
+#### Logging Allocator
+
+- Wraps any other allocator
+- Logs all allocations and deallocations
+- Configurable success/failure output streams
+- Useful for debugging memory usage
+
+#### [Arena Allocator](https://www.gingerbill.org/article/2019/02/08/memory-allocation-strategies-002/)
+
+- Works with fixed memory buffer
+- Linear allocation (bump allocator)
+- No individual deallocations
+- Fast allocations with no fragmentation
+- Perfect for temporary allocations
+
+### Planned
+
+- Stack allocator (LIFO deallocations)
+- Pool allocator (fixed-size blocks)
+- Free list allocator (no block size restrictions)
 - More to come as existing ones are tested and stable
 
 ## Interface
@@ -82,12 +103,12 @@ logging_allocator_t logging_allocator_init(const allocator_t *wrapped, FILE *suc
 logging_allocator_t logging_allocator_init_default(const allocator_t *wrapped);
 allocator_t         logging_allocator_to_allocator(logging_allocator_t *ctx);
 
-// ----- FIXED BUFFER allocator -----
-typedef struct fixed_buffer_allocator_t fixed_buffer_allocator_t;
+// ----- ARENA allocator -----
+typedef struct arena_allocator_t arena_allocator_t;
 
-fixed_buffer_allocator_t fixed_buffer_allocator_init(void *buf, size_t size);
-allocator_t              fixed_buffer_allocator_to_allocator(fixed_buffer_allocator_t *ctx);
-void                     fixed_buffer_allocator_reset(fixed_buffer_allocator_t *ctx);
+arena_allocator_t arena_allocator_init(void *buf, size_t size);
+allocator_t       arena_allocator_to_allocator(arena_allocator_t *ctx);
+void              arena_allocator_reset(arena_allocator_t *ctx);
 ```
 
 ## Usage Example

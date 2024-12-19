@@ -21,6 +21,7 @@ COMMON_FLAGS = -std=c11 $(WARNINGS)
 # Flags
 # Build type flags
 CFLAGS_DEBUG = $(COMMON_FLAGS) -O0 -g -DDEBUG
+CFLAGS_RELEASE = $(COMMON_FLAGS) -O3 -DNDEBUG
 CFLAGS ?= $(CFLAGS_DEBUG)  # Default to debug build
 
 # Dependency generation
@@ -38,9 +39,12 @@ $(TEST_BIN_DIR):
 $(TEST_BIN_DIR)/%: $(TEST_DIR)/%.c $(TEST_IMPL) $(HEADER) | $(TEST_BIN_DIR)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -o $@ $< $(TEST_IMPL)
 
-# Debug target
+# Debug and release targets
 debug: CFLAGS = $(CFLAGS_DEBUG)
 debug: test
+
+release: CFLAGS = $(CFLAGS_RELEASE)
+release: test
 
 # Run tests
 test: $(TEST_BINARIES)

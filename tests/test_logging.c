@@ -44,6 +44,7 @@ void test_logging_custom_files(void) {
     fseek(success_file, 0, SEEK_END);
     long success_size = ftell(success_file);
     assert(success_size > 0);
+    (void) success_size;
 
     fclose(success_file);
     fclose(failure_file);
@@ -53,23 +54,25 @@ void test_logging_failure(void) {
     printf("test_logging_failure\n");
 
     uint8_t small_buf[16];
-    fixed_buffer_allocator_t fba = fixed_buffer_allocator_init(small_buf, sizeof(small_buf));
+    arena_allocator_t arena = arena_allocator_init(small_buf, sizeof(small_buf));
 
     FILE *success_file = tmpfile();
     assert(success_file != NULL);
     FILE *failure_file = tmpfile();
     assert(failure_file != NULL);
 
-    allocator_t fba_allocator = fixed_buffer_allocator_to_allocator(&fba);
-    logging_allocator_t logging_allocator = logging_allocator_init(&fba_allocator, success_file, failure_file);
+    allocator_t arena_allocator = arena_allocator_to_allocator(&arena);
+    logging_allocator_t logging_allocator = logging_allocator_init(&arena_allocator, success_file, failure_file);
     allocator_t allocator = logging_allocator_to_allocator(&logging_allocator);
 
     void* ptr = alloc_raw(&allocator, 32, 8);
     assert(ptr == NULL);
+    (void) ptr;
 
     fseek(failure_file, 0, SEEK_END);
     long failure_size = ftell(failure_file);
     assert(failure_size > 0);
+    (void) failure_size;
 
     fclose(success_file);
     fclose(failure_file);

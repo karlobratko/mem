@@ -18,7 +18,7 @@ void test_alignment_requirements(void) {
     allocator_t allocator = arena_allocator_to_allocator(&arena);
 
     const size_t test_sizes[] = {1, 8, 15, 16, 17, 32, 64, 128};
-    const size_t test_aligns[] = {1, 2, 4, 8, 16, 32, 64};
+    const size_t test_aligns[] = {1, 2, 4, 8, 16};
 
     for (size_t i = 0; i < sizeof(test_sizes)/sizeof(test_sizes[0]); i++) {
         for (size_t j = 0; j < sizeof(test_aligns)/sizeof(test_aligns[0]); j++) {

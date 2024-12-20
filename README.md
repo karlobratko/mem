@@ -67,6 +67,14 @@ optimize memory usage for different scenarios without widespread code changes.
 - Fast allocations with no fragmentation
 - Perfect for temporary allocations
 
+#### [Stack Allocator](https://www.gingerbill.org/article/2019/02/15/memory-allocation-strategies-003/)
+
+- Works with fixed memory buffer
+- LIFO (Last-In-First-Out) allocation/deallocation pattern
+- Header-based allocation tracking
+- Perfect for temporary allocations that need predictable deallocation
+- Enforces strict deallocation order
+
 ### Planned
 
 - Stack allocator (LIFO deallocations)
@@ -109,6 +117,13 @@ typedef struct arena_allocator_t arena_allocator_t;
 arena_allocator_t arena_allocator_init(void *buf, size_t size);
 allocator_t       arena_allocator_to_allocator(arena_allocator_t *ctx);
 void              arena_allocator_reset(arena_allocator_t *ctx);
+
+// ----- STACK allocator -----
+typedef struct stack_allocator_t stack_allocator_t;
+
+stack_allocator_t stack_allocator_init(void *buf, size_t size);
+allocator_t       stack_allocator_to_allocator(stack_allocator_t *ctx);
+void              stack_allocator_reset(stack_allocator_t *ctx);
 ```
 
 ## Usage Example

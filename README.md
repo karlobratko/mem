@@ -77,7 +77,6 @@ optimize memory usage for different scenarios without widespread code changes.
 
 ### Planned
 
-- Stack allocator (LIFO deallocations)
 - Pool allocator (fixed-size blocks)
 - Free list allocator (no block size restrictions)
 - More to come as existing ones are tested and stable

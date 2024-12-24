@@ -31,6 +31,8 @@ typedef struct {
     const allocator_vtable_t *vtable;
 } allocator_t;
 
+// TODO: Give better naming for functions. 'alloc_raw' seems off, maybe '*_aligned' for alignment accepting functions,
+//       '*_typed' for type accepting functions with len, and '*_object' for type accepting function with no len parameter.
 MEMAPI void *alloc_raw(const allocator_t *allocator, size_t size, size_t align);
 
 MEMAPI bool resize_raw(const allocator_t *allocator, void *buf, size_t size, size_t align, size_t new_size);
@@ -39,6 +41,7 @@ MEMAPI void dealloc_raw(const allocator_t *allocator, void *buf, size_t size, si
 
 // TODO: Add realloc functionality, which combines resize, alloc and free.
 
+// TODO: Is aligning to alignof(type) by default valid, or should we align to alignof(max_align_t) by default?
 #define alloc(allocator, type, len) (alloc_raw((allocator), (sizeof(type) * len), alignof(type)))
 
 #define resize(allocator, type, buf, len, new_len) (resize_raw((allocator), (buf), (sizeof(type) * len), alignof(type), (sizeof(type) * new_len)))
@@ -85,6 +88,8 @@ MEMAPI void arena_allocator_reset(arena_allocator_t *ctx);
 
 // ----- STACK allocator -----
 
+// TODO: Provide thread safe arena implementation.
+
 typedef struct {
     void *buf;
     const size_t size;
@@ -117,9 +122,18 @@ MEMAPI void stack_allocator_reset(stack_allocator_t *ctx);
 #define MEMUTIL static
 #endif
 
+// TODO: Review MEM_ASSERT, we should implement it with debug trap.
 #ifndef MEM_ASSERT
 #include <assert.h>
 #define MEM_ASSERT(x) assert(x)
+#endif
+
+#ifndef MEM_STATIC_ASSERT
+#define MEM_STATIC_ASSERT3(cond, msg) typedef char static_assertion_##msg[(cond) ? 1 : -1]
+#define MEM_STATIC_ASSERT2(cond, line) MEM_STATIC_ASSERT3(cond, static_assertion_at_line_##line)
+// NOTE: We do this to enforce line number expansion.
+#define MEM_STATIC_ASSERT1(cond, line) MEM_STATIC_ASSERT2(cond, line)
+#define MEM_STATIC_ASSERT(cond)        MEM_STATIC_ASSERT1(cond, __LINE__)
 #endif
 
 #if !defined(NDEBUG) && !defined(MEM_DEBUG)
@@ -128,14 +142,30 @@ MEMAPI void stack_allocator_reset(stack_allocator_t *ctx);
 
 #define MEM_NOTUSED(x) (void)(x)
 
+#include <limits.h>
+#define MEM_IS_VALID_ALIGN(x) ((x) > 0 && ((x) & ((x) - 1)) == 0)
+
+// NOTE: We default to maximum power of 2 that fits into unsigned char (128).
+#define MEM_DEFAULT_MAX_ALIGNMENT (UCHAR_MAX & (~CHAR_MAX))
+MEM_STATIC_ASSERT(MEM_IS_VALID_ALIGN(MEM_DEFAULT_MAX_ALIGNMENT));
+
+#ifndef MEM_MAX_ALIGNMENT
+#define MEM_MAX_ALIGNMENT MEM_DEFAULT_MAX_ALIGNMENT
+#endif
+MEM_STATIC_ASSERT(MEM_IS_VALID_ALIGN(MEM_MAX_ALIGNMENT));
+
 #include <stdint.h>
 typedef uint32_t mem__u32;
 typedef uintptr_t mem__uptr;
 
-#ifndef MEM_BYTE_ORDER
-#define MEM_BYTE_ORDER
-#define MEM_BIG_ENDIAN    0
-#define MEM_LITTLE_ENDIAN 0
+#if MEM_MAX_ALIGNMENT <= MEM_DEFAULT_MAX_ALIGNMENT
+typedef unsigned char mem__align_t;
+#elif MEM_MAX_ALIGNMENT <= (UINT_MAX & (~INT_MAX))
+// NOTE: Maximum power of 2 that fits into unsigned int.
+typedef unsigned int mem__align_t;
+#else
+typedef size_t mem__align_t;
+#endif
 
 #if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
 #undef MEM_LITTLE_ENDIAN
@@ -155,16 +185,9 @@ typedef uintptr_t mem__uptr;
 #define MEM_BIG_ENDIAN 1
 #endif
 #endif
-#endif
 
-#include <string.h>
 #include <stdlib.h>
-
-#include <limits.h>
-#define MEM_DEFAULT_MAX_ALIGNMENT (UCHAR_MAX & (~CHAR_MAX))
-typedef size_t mem__align_t;
-
-#define MEM_FIXED_BUFFER_ALLOCATOR_DEFAULT_MAX_ALIGNMENT alignof(max_align_t)
+#include <string.h>
 
 #ifdef MEM_DEBUG
 #if MEM_BIG_ENDIAN
@@ -203,7 +226,7 @@ MEMUTIL bool mem__is_poisoned(const void *s, size_t n) {
 #endif
 
 MEMUTIL bool mem__align_is_valid(const size_t align) {
-    return align > 0 && (align & (align - 1)) == 0;
+    return MEM_IS_VALID_ALIGN(align);
 }
 
 MEMUTIL mem__uptr mem__align_backward(const mem__uptr address, const size_t alignment) {
@@ -294,7 +317,11 @@ MEMIMPL void dealloc_raw(const allocator_t *allocator, void *buf, const size_t s
 
 // ----- LIBC allocator -----
 
-// TODO: Consider restricting upper bound alignment for LIBC allocator.
+#ifndef MEM_LIBC_ALLOCATOR_MAX_ALIGNMENT
+#define MEM_LIBC_ALLOCATOR_MAX_ALIGNMENT MEM_MAX_ALIGNMENT
+#endif
+MEM_STATIC_ASSERT(
+    MEM_IS_VALID_ALIGN(MEM_LIBC_ALLOCATOR_MAX_ALIGNMENT) && MEM_LIBC_ALLOCATOR_MAX_ALIGNMENT <= MEM_MAX_ALIGNMENT);
 
 typedef struct {
     alignas(max_align_t)
@@ -333,6 +360,7 @@ MEMUTIL void *mem__libc_allocator_alloc(void *ctx, size_t size, size_t align) {
     MEM_ASSERT(ctx == NULL);
     MEM_ASSERT(size > 0);
     MEM_ASSERT(mem__align_is_valid(align));
+    MEM_ASSERT(align <= MEM_LIBC_ALLOCATOR_MAX_ALIGNMENT);
 
 #ifdef PREFER_LIBC_ALIGNED_ALLOC
     void *raw_memory = aligned_alloc(align, size);
@@ -398,9 +426,10 @@ MEMUTIL bool mem__libc_allocator_resize(void *ctx, void *buf, size_t size, size_
     MEM_ASSERT(size != new_size);
     MEM_ASSERT(size != new_size);
     MEM_ASSERT(mem__align_is_valid(align));
+    MEM_ASSERT(align <= MEM_LIBC_ALLOCATOR_MAX_ALIGNMENT);
 
     if (new_size > size) {
-        // TODO: We could consider enabling growing to fill excess bytes on the right of data between requested_size and total_size allocated for aligning.
+        // TODO: Consider enabling growing to fill excess bytes on the right of data between requested_size and total_size allocated for aligning.
         return false;
     }
 
@@ -425,6 +454,7 @@ MEMUTIL void mem__libc_allocator_dealloc(void *ctx, void *buf, size_t size, size
     MEM_ASSERT(buf != NULL);
     MEM_ASSERT(size > 0);
     MEM_ASSERT(mem__align_is_valid(align));
+    MEM_ASSERT(align <= MEM_LIBC_ALLOCATOR_MAX_ALIGNMENT);
 
 #ifdef PREFER_LIBC_ALIGNED_ALLOC
     free(buf);
@@ -576,8 +606,10 @@ MEMIMPL allocator_t logging_allocator_to_allocator(logging_allocator_t *ctx) {
 // ----- ARENA allocator -----
 
 #ifndef MEM_ARENA_ALLOCATOR_MAX_ALIGNMENT
-#define MEM_ARENA_ALLOCATOR_MAX_ALIGNMENT MEM_FIXED_BUFFER_ALLOCATOR_DEFAULT_MAX_ALIGNMENT
+#define MEM_ARENA_ALLOCATOR_MAX_ALIGNMENT MEM_MAX_ALIGNMENT
 #endif
+MEM_STATIC_ASSERT(
+    MEM_IS_VALID_ALIGN(MEM_ARENA_ALLOCATOR_MAX_ALIGNMENT) && MEM_ARENA_ALLOCATOR_MAX_ALIGNMENT <= MEM_MAX_ALIGNMENT);
 
 MEMUTIL void *mem__arena_allocator_alloc(void *ctx, size_t size, size_t align) {
     MEM_ASSERT(ctx != NULL);
@@ -614,6 +646,10 @@ MEMIMPL arena_allocator_t arena_allocator_init(void *buf, const size_t size) {
     MEM_ASSERT(buf != NULL);
     MEM_ASSERT(size > 0);
 
+#ifdef MEM_DEBUG
+    mem__mark_as_allocated(buf, size);
+#endif
+
     return (arena_allocator_t){
         .buf = buf,
         .size = size,
@@ -633,38 +669,24 @@ MEMIMPL allocator_t arena_allocator_to_allocator(arena_allocator_t *ctx) {
 MEMIMPL void arena_allocator_reset(arena_allocator_t *ctx) {
     MEM_ASSERT(ctx != NULL);
 
-    ctx->offset = 0;
+#ifdef MEM_DEBUG
+    mem__mark_as_freed(ctx->buf, ctx->offset);
+#endif
 
-    // TODO: Mark memory as deleted.
+    ctx->offset = 0;
 }
 
 // ----- STACK allocator -----
 
 #ifndef MEM_STACK_ALLOCATOR_MAX_ALIGNMENT
-#define MEM_STACK_ALLOCATOR_MAX_ALIGNMENT MEM_FIXED_BUFFER_ALLOCATOR_DEFAULT_MAX_ALIGNMENT
+#define MEM_STACK_ALLOCATOR_MAX_ALIGNMENT MEM_MAX_ALIGNMENT
 #endif
+MEM_STATIC_ASSERT(
+    MEM_IS_VALID_ALIGN(MEM_STACK_ALLOCATOR_MAX_ALIGNMENT) && MEM_STACK_ALLOCATOR_MAX_ALIGNMENT <= MEM_MAX_ALIGNMENT);
 
-// TODO: Investigate potential size optimizations, maybe we could save some header space by saving padding for smaller alignments to unsingned char.
 typedef struct {
-#ifdef MEM_DEBUG
-    mem__u32 guard_start;
-#endif
     mem__align_t padding;
-#ifdef MEM_DEBUG
-    mem__u32 guard_end;
-#endif
 } mem__stack_allocator_header_t;
-
-#ifdef MEM_DEBUG
-MEMUTIL void mem__stack_allocator_header_guard(mem__stack_allocator_header_t *header) {
-    header->guard_start = MEM_HEADER_GUARD_PATTERN;
-    header->guard_end = MEM_HEADER_GUARD_PATTERN;
-}
-
-MEMUTIL bool mem__stack_allocator_header_is_guarded(const mem__stack_allocator_header_t *header) {
-    return header->guard_start == MEM_HEADER_GUARD_PATTERN && header->guard_end == MEM_HEADER_GUARD_PATTERN;
-}
-#endif
 
 MEMUTIL mem__stack_allocator_header_t *mem__stack_allocator_header_get(const void *buf) {
     return (mem__stack_allocator_header_t *) mem__align_backward(
@@ -704,7 +726,6 @@ MEMUTIL void *mem__stack_allocator_alloc(void *ctx, size_t size, size_t align) {
     header->padding = padding;
 
 #ifdef MEM_DEBUG
-    mem__stack_allocator_header_guard(header);
     mem__mark_as_poisoned((void *) offset_address, padding);
 
     const mem__uptr header_end_address = header_address + sizeof(mem__stack_allocator_header_t);
@@ -742,8 +763,6 @@ MEMUTIL void mem__stack_allocator_dealloc(void *ctx, void *buf, size_t size, siz
     const size_t offset = old_offset_address - buf_address;
 
 #ifdef MEM_DEBUG
-    mem__stack_allocator_header_is_guarded(header);
-
     MEM_ASSERT(mem__is_poisoned((void *)old_offset_address, header->padding));
 
     const mem__uptr header_address = (mem__uptr) header;
@@ -766,6 +785,10 @@ MEMIMPL stack_allocator_t stack_allocator_init(void *buf, const size_t size) {
     MEM_ASSERT(buf != NULL);
     MEM_ASSERT(size > 0);
 
+#ifdef MEM_DEBUG
+    mem__mark_as_allocated(buf, size);
+#endif
+
     return (stack_allocator_t){
         .buf = buf,
         .size = size,
@@ -785,9 +808,11 @@ MEMIMPL allocator_t stack_allocator_to_allocator(stack_allocator_t *ctx) {
 MEMIMPL void stack_allocator_reset(stack_allocator_t *ctx) {
     MEM_ASSERT(ctx != NULL);
 
-    ctx->offset = 0;
+#ifdef MEM_DEBUG
+    mem__mark_as_freed(ctx->buf, ctx->offset);
+#endif
 
-    // TODO: Mark memory as deleted.
+    ctx->offset = 0;
 }
 
 #endif

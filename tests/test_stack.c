@@ -94,11 +94,34 @@ void test_reuse_after_dealloc(void) {
     (void)original_addr;
 }
 
+void test_reset(void) {
+    printf("test_reset\n");
+
+    uint8_t buffer[1024];
+    stack_allocator_t stack = stack_allocator_init(buffer, sizeof(buffer));
+    allocator_t allocator = stack_allocator_to_allocator(&stack);
+
+    void* ptr1 = alloc_raw(&allocator, 512, 8);
+    void* ptr2 = alloc_raw(&allocator, 256, 8);
+    assert(ptr1 != NULL && ptr2 != NULL);
+    (void) ptr1;
+    (void) ptr2;
+
+    stack_allocator_reset(&stack);
+
+    void* ptr3 = alloc_raw(&allocator, 512, 8);
+    assert(ptr3 != NULL);
+    assert(ptr3 == ptr1);
+    (void) ptr3;
+}
+
+
 int main(void) {
     test_basic_allocation();
     test_multiple_allocations_lifo();
     test_alignment_sequence();
     test_reuse_after_dealloc();
+    test_reset();
 
     return EXIT_SUCCESS;
 }
